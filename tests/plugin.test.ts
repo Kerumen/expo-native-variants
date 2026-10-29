@@ -126,6 +126,34 @@ describe('withNativeVariants', () => {
     expect(config.ios?.bundleIdentifier).toBe('com.acme.app');
   });
 
+  it.each(['', '   '])('treats NATIVE_VARIANT=%j as unset', (value) => {
+    vi.stubEnv('NATIVE_VARIANT', value);
+    const config = withNativeVariants({name: 'Acme', slug: 'acme'}, {variants});
+    expect(config.scheme).toBe('com.acme.app.dev');
+    expect(config.ios?.bundleIdentifier).toBe('com.acme.app.dev');
+  });
+
+  it('uses the first declared variant for an empty environment value without development', () => {
+    vi.stubEnv('NATIVE_VARIANT', ' ');
+    const config = withNativeVariants({name: 'Acme', slug: 'acme'}, {
+      variants: {production: variants.production},
+    });
+    expect(config.ios?.bundleIdentifier).toBe('com.acme.app');
+  });
+
+  it('trims whitespace around NATIVE_VARIANT', () => {
+    vi.stubEnv('NATIVE_VARIANT', ' development ');
+    const config = withNativeVariants({name: 'Acme', slug: 'acme'}, {variants});
+    expect(config.scheme).toBe('com.acme.app.dev');
+  });
+
+  it('still rejects an empty explicit variant option', () => {
+    vi.stubEnv('NATIVE_VARIANT', 'development');
+    expect(() => withNativeVariants({name: 'Acme', slug: 'acme'}, {variant: '', variants})).toThrow(
+      'variant must be a nonempty string',
+    );
+  });
+
   it('lets explicit config evaluation selection override NATIVE_VARIANT', () => {
     vi.stubEnv('NATIVE_VARIANT', 'development');
     expect(
