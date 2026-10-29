@@ -70,6 +70,24 @@ android {
 `;
 
 describe('reconcileAppBuildGradle', () => {
+    it.each([
+        "def description = '''Chris's app'''",
+        'def description = """Chris says "hi" today"""',
+        "def pattern = /don't/",
+        "def pattern = $/don't/$",
+        'def ratio = count / 2',
+        `def description = "\${"don't"}"`,
+        `def description = "\${foo("don't")}"`,
+
+        "def pattern = /first\nandroid { fake }\nlast/",
+        "def pattern = $/first\nreact { fake }\nlast/$",
+    ])('keeps real Gradle blocks after valid Groovy expressions: %s', (prefix) => {
+        const result = reconcileAppBuildGradle(`${prefix}\n${EXPO_GRADLE}`, OPTIONS);
+        expect(result.startsWith(`${prefix}\n`)).toBe(true);
+        expect(result).toContain('applicationId("com.acme.app.dev")');
+        expect(reconcileAppBuildGradle(result, OPTIONS)).toBe(result);
+    });
+
     it('generates full application IDs and debug-only React variants', () => {
         const result = reconcileAppBuildGradle(EXPO_GRADLE, OPTIONS);
 
@@ -194,5 +212,28 @@ describe('reconcileAppBuildGradle', () => {
         expect(() => reconcileAppBuildGradle(modified, OPTIONS)).toThrow(
             /generated contents were modified/,
         );
+    });
+});
+
+describe('reconcileAppBuildGradle block detection', () => {
+    it('ignores an android block inside a block comment', () => {
+        const source = EXPO_GRADLE.replace(
+            '\nandroid {',
+            '\n/*\nandroid {\n    namespace "old"\n}\n*/\nandroid {',
+        );
+        const result = reconcileAppBuildGradle(source, OPTIONS);
+
+        expect(result.indexOf('productFlavors')).toBeGreaterThan(result.indexOf('*/'));
+        expect(result).toContain('namespace "com.helloworld"');
+    });
+
+    it('ignores a react block inside a block comment', () => {
+        const source = EXPO_GRADLE.replace(
+            '\nreact {',
+            '\n/*\nreact {\n    old = true\n}\n*/\nreact {',
+        );
+        const result = reconcileAppBuildGradle(source, OPTIONS);
+
+        expect(result.indexOf('debuggableVariants =')).toBeGreaterThan(result.indexOf('*/'));
     });
 });
