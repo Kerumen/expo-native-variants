@@ -9,6 +9,7 @@ import type {NormalizedNativeVariantsOptions} from '../options';
 import {patchDevLauncherStripPhase} from './devLauncher';
 import {findSharedUrlSchemes, updateInfoPlist} from './infoPlist';
 import {updatePodfile} from './podfile';
+import {PREBUILD_VARIANT_PROPERTY} from './prebuildVariant';
 import {syncSchemeFilesMod} from './schemeFiles';
 import {getXcodeProjectMetadata, updateXcodeProject} from './xcodeProject';
 import {reconcileIosUpdateChannelPhase} from './updates';
@@ -23,6 +24,7 @@ const {
   withInfoPlist,
   withExpoPlist,
   withPodfile,
+  withPodfileProperties,
 } = configPlugins;
 
 export const withIosVariants = (
@@ -58,6 +60,11 @@ export const withIosVariants = (
       projectName: requireProjectName(modConfig.modRequest.projectName),
       options,
     });
+    return modConfig;
+  });
+
+  config = withPodfileProperties(config, (modConfig) => {
+    modConfig.modResults[PREBUILD_VARIANT_PROPERTY] = options.selectedVariant.key;
     return modConfig;
   });
 
