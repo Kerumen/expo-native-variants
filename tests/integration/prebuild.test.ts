@@ -28,6 +28,7 @@ import {
   renamedSettings,
 } from './fixture';
 import type {PrebuildSettings} from './fixture';
+import {assertLocalizedNamesPrebuild} from './localizedNames';
 import {assertUpdateChannelPrebuild} from './updateChannels';
 
 const executeFile = promisify(execFile);
@@ -51,6 +52,10 @@ describe('compiled package prebuild', () => {
     await assertUpdateChannelPrebuild(consumerRoot, runPrebuild);
     await writeFile(path.join(consumerRoot, 'app.config.js'), APP_CONFIG, 'utf8');
   });
+  it('generates localized display names per variant and reconciles them on rerun', async () => {
+    await assertLocalizedNamesPrebuild(consumerRoot, runPrebuild);
+    await writeFile(path.join(consumerRoot, 'app.config.js'), APP_CONFIG, 'utf8');
+  });
   it('reconciles the full matrix across clean, repeated, and changed prebuilds', async () => {
     await writeSettings(consumerRoot, initialSettings('before'));
     await runPrebuild(consumerRoot, true);
@@ -62,6 +67,42 @@ describe('compiled package prebuild', () => {
     await writeSettings(consumerRoot, renamedSettings('after'));
     await runPrebuild(consumerRoot, true);
     await assertRenamedNativeProject(consumerRoot);
+  });
+
+  it('drops a stale literal applicationId scheme when the selected variant changes', async () => {
+    await writeFile(
+      path.join(consumerRoot, 'app.config.js'),
+      `
+      const {ios, ...options} = require('./variant-settings.json').options;
+      module.exports = {name: 'Acme', slug: 'acme', plugins: [['expo-native-variants', options]]};
+    `,
+    );
+    await writeSettings(consumerRoot, initialSettings('before'));
+    await runPrebuild(consumerRoot, true);
+
+    // An earlier plugin-less prebuild leaves the applicationId scheme literal.
+    const manifestPath = path.join(consumerRoot, 'android/app/src/main/AndroidManifest.xml');
+    const staleFilter =
+      '<intent-filter><action android:name="android.intent.action.VIEW"/>' +
+      '<category android:name="android.intent.category.DEFAULT"/>' +
+      '<category android:name="android.intent.category.BROWSABLE"/>' +
+      '<data android:scheme="acme"/><data android:scheme="com.acme.app"/></intent-filter>';
+    const seeded = (await readFile(manifestPath, 'utf8')).replace(
+      '</activity>',
+      `${staleFilter}</activity>`,
+    );
+    await writeFile(manifestPath, seeded, 'utf8');
+
+    const switched = initialSettings('before');
+    await writeSettings(consumerRoot, {
+      ...switched,
+      options: {...switched.options, variant: 'development'},
+    });
+    await runPrebuild(consumerRoot, false);
+
+    const manifest = await readFile(manifestPath, 'utf8');
+    expect(manifest).not.toContain('android:scheme="com.acme.app"');
+    expect(count(manifest, '${nativeVariantScheme}')).toBe(1);
   });
 
   it('updates schemes and owned icons during non-clean prebuild without extension plugins', async () => {
@@ -95,6 +136,24 @@ describe('compiled package prebuild', () => {
       'utf8',
     );
     expect(count(manifest, '${nativeVariantScheme}')).toBe(1);
+  });
+
+  it('embeds the prebuild variant in plain Xcode configurations', async () => {
+    await writeFile(
+      path.join(consumerRoot, 'app.config.js'),
+      `
+      const {ios, variant, ...options} = require('./variant-settings.json').options;
+      module.exports = {name: 'Acme', slug: 'acme', plugins: [['expo-native-variants', options]]};
+    `,
+    );
+    await writeSettings(consumerRoot, initialSettings('before'));
+    await runPrebuild(consumerRoot, true, {NATIVE_VARIANT: 'production'});
+
+    const config = await readEmbeddedExpoConfig(consumerRoot, 'plain-debug', {
+      CONFIGURATION: 'Debug',
+    });
+    expect(config.ios.bundleIdentifier).toBe('com.acme.app');
+    expect(config.scheme).toBe('acme');
   });
 });
 
@@ -156,7 +215,11 @@ async function writeSettings(root: string, settings: PrebuildSettings): Promise<
   );
 }
 
-async function runPrebuild(root: string, clean: boolean): Promise<void> {
+async function runPrebuild(
+  root: string,
+  clean: boolean,
+  environment: Readonly<Record<string, string>> = {},
+): Promise<void> {
   const args = [expoCli, 'prebuild', '--no-install'];
   if (clean) {
     args.push('--clean');
@@ -172,6 +235,7 @@ async function runPrebuild(root: string, clean: boolean): Promise<void> {
         CI: '1',
         EXPO_NO_DOCTOR: '1',
         EXPO_OFFLINE: '1',
+        ...environment,
       },
       maxBuffer: 4 * 1024 * 1024,
     });
@@ -254,22 +318,31 @@ async function assertEmbeddedExpoConfig(root: string): Promise<void> {
     ['development', {EXPO_NATIVE_VARIANT_KEY: 'development'}],
     ['preview', {CONFIGURATION: 'Release-Preview'}],
   ] as const) {
-    const destination = path.join(root, 'embedded-config', key);
-    await mkdir(destination, {recursive: true});
-    await executeFile(
-      process.execPath,
-      ['-e', EXPO_CONFIG_COMMAND, '--', 'expo-native-variants', root, destination],
-      {
-        cwd: root,
-        env: {...process.env, ...environment},
-      },
-    );
-    const config = JSON.parse(await readFile(path.join(destination, 'app.config'), 'utf8'));
+    const config = await readEmbeddedExpoConfig(root, key, environment);
     expect(config.scheme).toBe(`acme-${key === 'development' ? 'dev' : key}`);
     expect(config.ios.bundleIdentifier).toBe(`com.acme.app.${key === 'development' ? 'dev' : key}`);
     expect(config.android.package).toBe(config.ios.bundleIdentifier);
     expect(config).not.toHaveProperty('mods');
   }
+}
+
+/** Runs the same expo-constants command that native builds use to embed the config. */
+async function readEmbeddedExpoConfig(
+  root: string,
+  label: string,
+  environment: Readonly<Record<string, string>>,
+) {
+  const destination = path.join(root, 'embedded-config', label);
+  await mkdir(destination, {recursive: true});
+  await executeFile(
+    process.execPath,
+    ['-e', EXPO_CONFIG_COMMAND, '--', 'expo-native-variants', root, destination],
+    {
+      cwd: root,
+      env: {...process.env, ...environment},
+    },
+  );
+  return JSON.parse(await readFile(path.join(destination, 'app.config'), 'utf8'));
 }
 
 async function assertNoRepeatedOutput(root: string): Promise<void> {

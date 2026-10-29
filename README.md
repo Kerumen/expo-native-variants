@@ -4,9 +4,10 @@ Generate every native app variant in one Expo prebuild. Switch between developme
 
 Stable releases use the npm `latest` tag, while prereleases use `next`.
 
-This community-maintained package targets Expo SDK 57. It is an early release for the standard Expo native templates with one iOS application target, optional explicitly configured iOS extension targets, and one Android flavor dimension. See [compatibility](#compatibility) before adding it to an existing app.
+This community-maintained package targets Expo SDK 57 and 58. It is an early release for the standard Expo native templates with one iOS application target, optional explicitly configured iOS extension targets, and one Android flavor dimension. See [compatibility](#compatibility) before adding it to an existing app.
 
 See the [validation record](./VALIDATION.md) for tested toolchain versions and results.
+Contributors should follow the [pull request and commit conventions](./CONTRIBUTING.md).
 Release maintainers can find the automated process in [RELEASING.md](./RELEASING.md).
 
 ## Configure variants
@@ -54,11 +55,13 @@ For Android, Expo CLI also accepts explicit variant and application selection:
 expo run:android --variant developmentDebug --app-id com.example.app.dev
 ```
 
+Expo CLI 58 treats every Android variant other than `debug` and `debugOptimized` as a production build, so this command loads the production `.env` files there. Build flavored debug variants from Android Studio and start Metro with `expo start --dev-client` when they depend on development `.env` values.
+
 On iOS, use Xcode for custom configurations. Expo CLI 57 defaults to the ordinary `Debug` configuration unless one is specified, and its environment-mode handling checks for the literal name `Release`. Selecting a custom scheme alone does not reliably select its configured build mode.
 
 ## Options
 
-The first declared variant supplies the Expo application identifiers, URL scheme, and ordinary iOS `Debug` and `Release` configurations. Set `NATIVE_VARIANT` when a tool needs the config for a different app. The plugin fills `ios.bundleIdentifier`, `android.package`, and `scheme`; no wrapper or `getUrlScheme` function is needed. It preserves additional, non-variant schemes after the preferred scheme.
+Expo config evaluation uses the `development` variant when declared, otherwise the first declared variant. Set `NATIVE_VARIANT` when a tool needs the config for a different app. The plugin fills `ios.bundleIdentifier`, `android.package`, and `scheme`; no wrapper or `getUrlScheme` function is needed. It preserves additional, non-variant schemes after the preferred scheme. The selected variant also supplies the ordinary iOS `Debug` and `Release` configurations, and native builds of those configurations embed its Expo config even when Xcode builds them without `NATIVE_VARIANT`.
 
 `variants` is the only required plugin option. The optional `variant` property overrides `NATIVE_VARIANT` during Expo config evaluation, and `ios.targets` adds extension targets created by another plugin. Neither `variant` nor the environment variable limits the generated matrix: every variant is generated.
 
@@ -66,7 +69,7 @@ The first declared variant supplies the Expo application identifiers, URL scheme
 | --- | --- |
 | `applicationId` | Full identifier shared by iOS and Android |
 | `icon` | Optional image shared by iOS and Android for this variant |
-| `displayName` | Optional name shown under the app icon; defaults to the Expo app name for the first variant and adds the variant name for the others |
+| `displayName` | Optional name shown under the app icon, or a map of names by language (see [Localized display names](#localized-display-names)); defaults to the Expo app name for the first variant and adds the variant name for the others |
 | `urlScheme` | Optional custom URL scheme; defaults to `applicationId` |
 | `updateChannel` | Optional native Expo Updates channel; omitted variants inherit the shared or EAS channel |
 | `runMode` | Xcode Run action's mode, `debug` by default |
@@ -79,6 +82,31 @@ The first declared variant supplies the Expo application identifiers, URL scheme
 | `android.flavor` | Optional Android product flavor name, starting with a lowercase letter |
 | `android.icon` | Optional Android launcher image |
 | `android.adaptiveIcon` | Optional `foregroundImage`, `backgroundImage`, `backgroundColor`, and `monochromeImage` |
+
+### Localized display names
+
+Give a variant per-language home-screen names with a map. It must contain a `default` key, which is used when no language matches. Other keys are BCP 47 tags such as `ar`, `pt-BR`, `zh-Hans`, or `zh-Hant`. A plain string works as before.
+
+```ts
+development: {
+  applicationId: 'com.acme.app.dev',
+  displayName: {
+    default: 'App Dev',
+    ar: 'تطبيق (تجريبي)',
+    fr: 'App Dév',
+  },
+},
+```
+
+Tags are canonicalized (`pt-br` becomes `pt-BR`), and two keys that canonicalize to the same tag are rejected. Names must not contain control characters. `displayName` stays the default name everywhere else in the plugin.
+
+On Android the plugin writes `values-b+<tag>/native_variants.xml` into the variant's flavor, containing only `app_name`. On iOS it writes `ios/<project>/NativeVariants/<variant>/<tag>.lproj/InfoPlist.strings` and adds an `[expo-native-variants] Localize display names` Run Script phase to the app target. At build time the phase copies the selected variant's strings into the built app, so each configuration shows its own names. The phase declares its inputs and outputs and works with user script sandboxing. The plugin also sets `CFBundleLocalizations` to the development language, your Expo `locales`, and every variant language. Do not edit the generated files or the phase; the plugin refuses to overwrite them if you do.
+
+#### Expo `locales` collision
+
+Expo's own [`locales`](https://docs.expo.dev/guides/localization/) option writes one shared resource per language. If a locale file sets `CFBundleDisplayName` (iOS) or `app_name` (Android), that shared name applies to every variant in that language, so a development build can show the production name. A build from the example app confirmed this on both platforms. The plugin overrides it where a variant lists the language: Android flavor resources win over the shared ones, and the iOS phase replaces only `CFBundleDisplayName` and keeps other localized keys such as permission texts. For a language that a variant does not list, the shared name still wins.
+
+The plugin warns during prebuild when a locale file sets the app name for a language that at least one variant does not list. In an Android build with `fr` in the development map only, the development APK showed the variant's French name and the production APK showed the shared one. Either remove the name key from the locale file, or list that language in every variant's `displayName` map.
 
 ### Icons
 
@@ -155,7 +183,7 @@ const options = {
 
 This produces `com.example.app.share` and `com.example.app.dev.share` for `MyAppShare`, plus the corresponding widget identifiers. The target-generating plugin remains responsible for creating targets, source files, build phases, frameworks, plist files, and entitlements. Register that plugin before `expo-native-variants`, and keep `expo-native-variants` last in the plugin list.
 
-Keep each suffix equal to the suffix in the target generator's own configuration. `expo-native-variants` validates and applies the resulting identifiers but does not rewrite that plugin's configuration.
+Keep each suffix equal to the suffix in the target generator's own configuration. `expo-native-variants` validates and applies the resulting identifiers, including the extension identifiers that the target generator records for EAS credentials, but does not rewrite that plugin's configuration.
 
 The extension's standard `Debug` and `Release` configurations are the templates for every generated variant configuration. Their Swift version, deployment target, plist path, signing settings, entitlements path, frameworks, and build phases remain intact. The application alone receives the variant display name and URL scheme.
 
@@ -249,11 +277,13 @@ Keep this entry before `expo-native-variants` in the plugins array. Existing thi
 
 Native builds automatically supply their identity when generating the embedded Expo config: iOS uses the build configuration, and Android generates a separate `expo-constants` asset for each flavor. The embedded scheme therefore matches the built app even when prebuild used a different default.
 
-A Metro server still serves one shared Expo manifest. Start it with `NATIVE_VARIANT` for the app you are developing. Keep the explicit `--scheme` as well: Expo CLI's Android native-scheme discovery reads unexpanded manifest placeholders.
+A Metro server serves one shared Expo manifest. With a `development` variant declared, start it without `NATIVE_VARIANT` to advertise that app's identifiers. Keep the explicit `--scheme`: Expo CLI's Android native-scheme discovery reads unexpanded manifest placeholders.
 
 ```sh
-NATIVE_VARIANT=development expo start --dev-client --scheme com.example.app.dev
+expo start --dev-client --scheme com.example.app.dev
 ```
+
+To develop another variant, set `NATIVE_VARIANT` to its key and pass its URL scheme. An explicit `variant` plugin option takes precedence over both the environment variable and the default.
 
 The Android development launcher also registers its own fixed `expo-dev-launcher` authentication scheme. That upstream callback remains shared when several debug clients are installed. The plugin preserves it and emits a warning. Use each variant's configured URL scheme for application links and development-client launch URLs.
 
@@ -277,7 +307,7 @@ Then choose `eas build --profile preview`. The plugin reads `NATIVE_VARIANT` aut
 
 Why not infer this from the EAS profile name? Expo's built-in `EAS_BUILD_PROFILE` is [not available during local app-config evaluation](https://docs.expo.dev/eas/environment-variables/usage/#using-environment-variables-with-eas-build). Profile `env` values are available both locally and on the builder. Using only the cloud profile name could select different identifiers during signing setup and the actual build.
 
-The `variant` plugin option is an escape hatch for config evaluation, not a build-matrix selector. For example, `variant: process.env.APP_VARIANT` lets an existing project keep its own environment-variable name. Without an override or `NATIVE_VARIANT`, config evaluation uses the first declared variant. During native compilation, the actual build identity takes precedence so its embedded metadata cannot accidentally use the config-evaluation default.
+The `variant` plugin option is an escape hatch for config evaluation, not a build-matrix selector. For example, `variant: process.env.APP_VARIANT` lets an existing project keep its own environment-variable name. Without an override or `NATIVE_VARIANT`, config evaluation uses `development` if declared, otherwise the first declared variant. During native compilation, the actual build identity takes precedence so its embedded metadata cannot accidentally use the config-evaluation default.
 
 The [example profiles](./example/eas.json) select Android Gradle tasks and ordinary iOS Debug/Release configurations. Treat them as a starting point. Cloud builds, signing, provisioning, and credential selection have not been verified, so EAS support is experimental. Do not rely on the cloud-only `EAS_BUILD_PROFILE` variable for local credential preflight.
 
@@ -300,6 +330,8 @@ EAS support remains experimental until its credential preflight and cloud artifa
 The [example](./example) contains three variants and displays the installed identifier, resolved variant, and debug/release mode. Install the repository dependencies with `npm install`, build the package, generate the example's native projects, and open its iOS workspace or Android project.
 
 Run the root package scripts with `npm run <script>`. Available scripts include `build`, `typecheck`, `test`, `test:integration`, and `verify:package`. After generating the example and installing native dependencies, `build:native:android` and `build:native:ios` build every debug/release combination without another prebuild. Native build validation requires Xcode with CocoaPods on macOS, or an Android SDK and compatible Java installation. Keep the example's generated native folders out of commits.
+
+The `example` script forwards a script name and any following arguments to the example workspace. Use `npm run example -- start`, `npm run example -- prebuild`, or `npm run example -- config` from the repository root.
 
 ## License
 

@@ -95,6 +95,35 @@ describe(updateXcodeProject, () => {
     });
   });
 
+  it('adds Swift DEBUG to project-level variant debug configurations only', () => {
+    const fixture = createProjectFixture();
+    const conditions = (list: string, name: string) =>
+      getConfiguration(fixture, list, name).buildSettings.SWIFT_ACTIVE_COMPILATION_CONDITIONS;
+
+    updateXcodeProject(fixture.project, options);
+    updateXcodeProject(fixture.project, options);
+
+    expect(conditions('PROJECT_CONFIG_LIST', 'Debug-Development')).toEqual([
+      '"$(inherited)"',
+      'DEBUG',
+    ]);
+    expect(conditions('PROJECT_CONFIG_LIST', 'Release-Development')).toBeUndefined();
+    expect(conditions('TARGET_CONFIG_LIST', 'Debug-Development')).toBeUndefined();
+  });
+
+  it('keeps an existing Swift DEBUG condition from React Native', () => {
+    const fixture = createProjectFixture();
+    getConfiguration(fixture, 'PROJECT_CONFIG_LIST', 'Debug').buildSettings
+      .SWIFT_ACTIVE_COMPILATION_CONDITIONS = ['"$(inherited)"', 'DEBUG'];
+
+    updateXcodeProject(fixture.project, options);
+
+    expect(
+      getConfiguration(fixture, 'PROJECT_CONFIG_LIST', 'Debug-Production').buildSettings
+        .SWIFT_ACTIVE_COMPILATION_CONDITIONS,
+    ).toEqual(['"$(inherited)"', 'DEBUG']);
+  });
+
   it('maps base Debug and Release to the selected variant', () => {
     const fixture = createProjectFixture();
     updateXcodeProject(fixture.project, options);
@@ -262,9 +291,9 @@ function createProjectFixture() {
   };
   const project = {
     generateUuid: () => `GENERATED_${String(++uuid)}`,
+    getFirstProject: () => ({uuid: 'PROJECT', firstProject: sections.projects.PROJECT}),
     pbxFileReferenceSection: () => sections.files,
     pbxNativeTargetSection: () => sections.nativeTargets,
-    pbxProjectSection: () => sections.projects,
     pbxXCBuildConfigurationSection: () => sections.configurations,
     pbxXCConfigurationList: () => sections.lists,
   };

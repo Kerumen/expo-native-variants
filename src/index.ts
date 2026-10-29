@@ -2,13 +2,20 @@ import type {ConfigPlugin} from 'expo/config-plugins';
 
 import {withAndroidVariants} from './android';
 import {withIosVariants} from './ios';
-import {applySelectedVariantIdentifiers} from './options/applySelectedVariantIdentifiers';
+import {
+  applySelectedExtensionIdentifiers,
+  applySelectedVariantIdentifiers,
+} from './options/applySelectedVariantIdentifiers';
 import {normalizeNativeVariants} from './options';
 import {selectBuildVariant} from './options/selectBuildVariant';
 import {resolveVariantIcons} from './icons/resolve';
+import {readPrebuildVariant} from './ios/prebuildVariant';
 import type {NativeVariantsOptions, NormalizedNativeVariantsOptions} from './options';
 import {applySelectedVariantUpdateChannel, getNativeUpdateChannels} from './updates';
 import type {NativeUpdateChannels} from './updates';
+
+/** CI systems often define NATIVE_VARIANT with no value; treat that as unset. */
+const envVariant = (value: string | undefined) => value?.trim() || undefined;
 
 export const withNativeVariants: ConfigPlugin<NativeVariantsOptions> = (config, options) => {
   const normalizedOptions = resolveVariantIcons(
@@ -16,18 +23,25 @@ export const withNativeVariants: ConfigPlugin<NativeVariantsOptions> = (config, 
     selectBuildVariant(
       normalizeNativeVariants({
         configName: config.name,
-        options: {...options, variant: options?.variant ?? process.env.NATIVE_VARIANT},
+        options: {...options, variant: options?.variant ?? envVariant(process.env.NATIVE_VARIANT)},
       }),
       process.env,
+      process.env.CONFIGURATION === undefined
+        ? undefined
+        : readPrebuildVariant(config._internal?.projectRoot),
     ),
   );
 
   const updates = getNativeUpdateChannels(config, normalizedOptions);
   const selectedConfig = applySelectedVariantUpdateChannel(
-    applySelectedVariantIdentifiers(
-      config,
+    applySelectedExtensionIdentifiers(
+      applySelectedVariantIdentifiers(
+        config,
+        normalizedOptions.selectedVariant,
+        normalizedOptions.variants,
+      ),
       normalizedOptions.selectedVariant,
-      normalizedOptions.variants,
+      normalizedOptions.iosTargets,
     ),
     normalizedOptions,
     updates,

@@ -10,6 +10,20 @@ Minimal native resource fixtures built all three release variants from one gener
 
 These checks establish native channel selection and packaging. Full React Native app builds, installed `expo-updates` runtime behavior, EAS cloud builds, and live OTA delivery were not exercised for this feature.
 
+## Localized display name validation, October 1, 2026
+
+Localized `displayName` maps were checked with Expo 57.0.24, Xcode 27.0 build 27A266a, Gradle 9.3.1, Android Gradle plugin 8.12.0, and Java 21.0.12.1.
+
+An unmodified copy of the example app with Expo `locales` confirmed the collision described in the README. The development APK carried the shared `fr` `app_name`, and the development iPhone build showed the shared name on a French home screen.
+
+A prebuilt copy of the example app with a localized development variant (`fr`, `ar`, `zh-Hans`) was built as the development debug APK and as the iOS Debug-Development simulator app, with user script sandboxing enabled for the iOS app target. The built `.app` contained the three `InfoPlist.strings` files with the right names, and `aapt2` showed the matching `app_name` entries in the APK.
+
+Runtime checks used an iOS 18.6 simulator and an Android API 34 arm64 emulator (Google APIs with Play Store image). The launcher labels matched the map in English (default), French, Arabic, and Simplified Chinese on both platforms. The French name contained an apostrophe and an ampersand, which compiled and displayed correctly. The Android emulator language was changed through the system Settings UI because the emulator image cannot be rooted.
+
+With Expo `locales` setting `app_name` for `fr` and a French name only on the development variant, the development APK resolved to the variant name and the production APK to the shared name.
+
+Not exercised: release builds, EAS builds, `zh-Hant` fallback on a device (the APK showed the default name for `zh-TW`), iOS devices, and extension targets.
+
 ## Original release validation
 
 This records checks performed from September 19 through 21, 2026 for the published `0.1.0` release and the `0.2.0-alpha.0` prerelease.
@@ -81,7 +95,7 @@ Apple's asset compiler accepts all three example icon catalogs with each catalog
 
 ## Compatibility limits
 
-Expo `58.0.0-preview.3` passed an isolated clean prebuild advisory check. Its native compilation and runtime behavior remain untested. The package's supported peer range stays on SDK 57.
+Expo `58.0.0-preview.3` passed an isolated clean prebuild advisory check. Its native compilation and runtime behavior remain untested.
 
 The default Expo 57 template crashes before React Native starts when launched on iOS 27 after linking with the iOS 27 SDK. The crash identifies UIKit's scene-lifecycle assertion. The same release runs on iOS 26.5. Expo documents an [official scene-support opt-in](https://github.com/expo/fyi/blob/main/ios-scene-lifecycle.md); this example does not enable or validate it.
 
